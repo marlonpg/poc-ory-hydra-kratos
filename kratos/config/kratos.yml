@@ -2,7 +2,13 @@ version: v0.14.0
 
 selfservice:
   default_browser_return_url: http://localhost:3000/post-login
+  allowed_return_urls:
+    - http://localhost:3000
+    - http://localhost:3001
+    - http://localhost:4455
   flows:
+    error:
+      ui_url: http://localhost:4455/error
     login:
       ui_url: http://localhost:4455/login
     registration:
@@ -26,9 +32,11 @@ serve:
       enabled: true
       allowed_origins:
         - http://localhost:3000
+        - http://localhost:3001
         - http://localhost:4455
+        - http://localhost:4433
   admin:
-    base_url: http://kratos:4434/
+    base_url: http://localhost:4434/
 
 identity:
   default_schema_id: default

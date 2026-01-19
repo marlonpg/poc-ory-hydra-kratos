@@ -5,7 +5,9 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 4000;
-const OIDC_ISSUER_URL = (process.env.OIDC_ISSUER_URL || 'http://localhost:4444/').replace(/\/$/, '');
+// Use Hydra public issuer (what tokens say) for validation, but fetch JWKS via cluster-internal URL to avoid localhost resolution issues in Docker.
+const ISSUER_EXPECTED = (process.env.OIDC_ISSUER_URL_PUBLIC || 'http://localhost:4444/').replace(/\/$/, '');
+const JWKS_URL = process.env.OIDC_JWKS_URL || 'http://hydra:4444/.well-known/jwks.json';
 const REQUIRED_SCOPE = process.env.REQUIRED_SCOPE || 'vote:cast';
 
 // In-memory store for demo (replace with DB/Kafka for real system)
@@ -16,9 +18,8 @@ let jwksCache = null;
 
 async function getJWKS() {
   if (!jwksCache) {
-    const url = `${OIDC_ISSUER_URL}/.well-known/jwks.json`;
-    console.log(`Fetching JWKS from ${url}`);
-    jwksCache = createRemoteJWKSet(new URL(url));
+    console.log(`Fetching JWKS from ${JWKS_URL}`);
+    jwksCache = createRemoteJWKSet(new URL(JWKS_URL));
   }
   return jwksCache;
 }
@@ -26,7 +27,7 @@ async function getJWKS() {
 async function verifyToken(token) {
   const jwks = await getJWKS();
   const result = await jwtVerify(token, jwks, {
-    issuer: `${OIDC_ISSUER_URL}/`,
+    issuer: `${ISSUER_EXPECTED}/`,
     audience: undefined // Hydra doesn't always enforce audience for access tokens
   });
   return result.payload;
@@ -50,8 +51,12 @@ app.post('/vote', async (req, res) => {
 
     console.log('Token payload:', payload);
 
-    // Check scopes (stored as space-separated string in access token)
-    const scopes = (payload.scope || '').split(' ');
+    // Check scopes; Hydra can emit either `scope` (space-separated string) or `scp` (array)
+    const scopes = (() => {
+      if (payload.scope) return payload.scope.split(' ');
+      if (Array.isArray(payload.scp)) return payload.scp;
+      return [];
+    })();
     if (!scopes.includes(REQUIRED_SCOPE)) {
       return res.status(403).json({ error: 'insufficient scopes' });
     }

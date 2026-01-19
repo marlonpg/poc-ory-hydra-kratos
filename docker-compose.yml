@@ -11,20 +11,28 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ory"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   hydra-migrate:
     image: oryd/hydra:v2
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     environment:
       - DSN=postgres://ory:orysecret@postgres:5432/hydra?sslmode=disable
-    command: ["hydra","migrate","sql","-e","--yes"]
+    entrypoint: /bin/sh
+    command: -c "hydra migrate sql -e --yes"
     restart: on-failure
 
   hydra:
     image: oryd/hydra:v2
     depends_on:
-      - hydra-migrate
+      hydra-migrate:
+        condition: service_completed_successfully
     environment:
       - DSN=postgres://ory:orysecret@postgres:5432/hydra?sslmode=disable
       - SECRETS_SYSTEM=this_should_be_random_and_32_bytes_min
@@ -36,7 +44,8 @@ services:
       - STRATEGIES_ACCESS_TOKEN=jwt
       - OIDC_SUBJECT_IDENTIFIERS_SUPPORTED_TYPES=public
       - OIDC_SUBJECT_IDENTIFIERS_PAIRWISE_SALT=somesaltchangeit
-    command: ["hydra","serve","all","--dangerous-force-http"]
+    entrypoint: /bin/sh
+    command: -c "hydra serve all --dev"
     ports:
       - "4444:4444" # public
       - "4445:4445" # admin
@@ -44,25 +53,29 @@ services:
   kratos-migrate:
     image: oryd/kratos:v1
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     volumes:
       - ./kratos/config:/etc/config
       - ./kratos/schemas:/etc/schemas
     environment:
       - DSN=postgres://ory:orysecret@postgres:5432/kratos?sslmode=disable
-    command: ["kratos","migrate","sql","--yes","--config","/etc/config/kratos.yml"]
+    entrypoint: /bin/sh
+    command: -c "kratos migrate sql -e --yes"
     restart: on-failure
 
   kratos:
     image: oryd/kratos:v1
     depends_on:
-      - kratos-migrate
+      kratos-migrate:
+        condition: service_completed_successfully
     volumes:
       - ./kratos/config:/etc/config
       - ./kratos/schemas:/etc/schemas
     environment:
       - DSN=postgres://ory:orysecret@postgres:5432/kratos?sslmode=disable
-    command: ["kratos","serve","--config","/etc/config/kratos.yml","--dev"]
+    entrypoint: /bin/sh
+    command: -c "kratos serve --config /etc/config/kratos.yml --dev"
     ports:
       - "4433:4433" # public
       - "4434:4434" # admin
@@ -72,7 +85,11 @@ services:
     environment:
       - KRATOS_PUBLIC_URL=http://kratos:4433
       - KRATOS_BROWSER_URL=http://localhost:4433
+      - KRATOS_ADMIN_URL=http://kratos:4434
       - PORT=4455
+      - COOKIE_SECRET=this_is_a_secret_and_needs_to_be_32_bytes_minimum_length_pass
+      - CSRF_COOKIE_NAME=__Host-csrf
+      - CSRF_COOKIE_SECRET=this_is_another_secret_and_needs_to_be_32_bytes_minimum_length
     ports:
       - "4455:4455"
     depends_on:
