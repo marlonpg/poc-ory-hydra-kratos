@@ -1,0 +1,108 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: ory
+      POSTGRES_PASSWORD: orysecret
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d
+
+  hydra-migrate:
+    image: oryd/hydra:v2
+    depends_on:
+      - postgres
+    environment:
+      - DSN=postgres://ory:orysecret@postgres:5432/hydra?sslmode=disable
+    command: ["hydra","migrate","sql","-e","--yes"]
+    restart: on-failure
+
+  hydra:
+    image: oryd/hydra:v2
+    depends_on:
+      - hydra-migrate
+    environment:
+      - DSN=postgres://ory:orysecret@postgres:5432/hydra?sslmode=disable
+      - SECRETS_SYSTEM=this_should_be_random_and_32_bytes_min
+      - URLS_SELF_ISSUER=http://localhost:4444/
+      - URLS_LOGIN=http://localhost:3000/login
+      - URLS_CONSENT=http://localhost:3000/consent
+      - SERVE_PUBLIC_PORT=4444
+      - SERVE_ADMIN_PORT=4445
+      - STRATEGIES_ACCESS_TOKEN=jwt
+      - OIDC_SUBJECT_IDENTIFIERS_SUPPORTED_TYPES=public
+      - OIDC_SUBJECT_IDENTIFIERS_PAIRWISE_SALT=somesaltchangeit
+    command: ["hydra","serve","all","--dangerous-force-http"]
+    ports:
+      - "4444:4444" # public
+      - "4445:4445" # admin
+
+  kratos-migrate:
+    image: oryd/kratos:v1
+    depends_on:
+      - postgres
+    volumes:
+      - ./kratos/config:/etc/config
+      - ./kratos/schemas:/etc/schemas
+    environment:
+      - DSN=postgres://ory:orysecret@postgres:5432/kratos?sslmode=disable
+    command: ["kratos","migrate","sql","--yes","--config","/etc/config/kratos.yml"]
+    restart: on-failure
+
+  kratos:
+    image: oryd/kratos:v1
+    depends_on:
+      - kratos-migrate
+    volumes:
+      - ./kratos/config:/etc/config
+      - ./kratos/schemas:/etc/schemas
+    environment:
+      - DSN=postgres://ory:orysecret@postgres:5432/kratos?sslmode=disable
+    command: ["kratos","serve","--config","/etc/config/kratos.yml","--dev"]
+    ports:
+      - "4433:4433" # public
+      - "4434:4434" # admin
+
+  kratos-ui:
+    image: oryd/kratos-selfservice-ui-node:latest
+    environment:
+      - KRATOS_PUBLIC_URL=http://kratos:4433
+      - KRATOS_BROWSER_URL=http://localhost:4433
+      - PORT=4455
+    ports:
+      - "4455:4455"
+    depends_on:
+      - kratos
+
+  login-consent:
+    build:
+      context: ./services/login-consent
+    environment:
+      - PORT=3000
+      - HYDRA_ADMIN_URL=http://hydra:4445
+      - KRATOS_PUBLIC_URL=http://kratos:4433
+      - KRATOS_UI_URL=http://localhost:4455
+    ports:
+      - "3000:3000"
+    depends_on:
+      - hydra
+      - kratos
+
+  vote-api:
+    build:
+      context: ./services/vote-api
+    environment:
+      - PORT=4000
+      - OIDC_ISSUER_URL=http://localhost:4444/
+      - REQUIRED_SCOPE=vote:cast
+    ports:
+      - "4000:4000"
+    depends_on:
+      - hydra
+
+volumes:
+  pgdata:
