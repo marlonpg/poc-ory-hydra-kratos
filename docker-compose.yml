@@ -37,8 +37,8 @@ services:
       - DSN=postgres://ory:orysecret@postgres:5432/hydra?sslmode=disable
       - SECRETS_SYSTEM=this_should_be_random_and_32_bytes_min
       - URLS_SELF_ISSUER=http://localhost:4444/
-      - URLS_LOGIN=http://localhost:3000/login
-      - URLS_CONSENT=http://localhost:3000/consent
+      - URLS_LOGIN=http://localhost:3001/login
+      - URLS_CONSENT=http://localhost:3001/consent
       - SERVE_PUBLIC_PORT=4444
       - SERVE_ADMIN_PORT=4445
       - STRATEGIES_ACCESS_TOKEN=jwt
@@ -95,31 +95,44 @@ services:
     depends_on:
       - kratos
 
-  login-consent:
+  login-consent-java:
     build:
-      context: ./services/login-consent
+      context: ./services/login-consent-java
     environment:
-      - PORT=3000
+      - PORT=3001
       - HYDRA_ADMIN_URL=http://hydra:4445
       - KRATOS_PUBLIC_URL=http://kratos:4433
       - KRATOS_UI_URL=http://localhost:4455
+      - CLIENT_ID=voter-app-java
+      - REDIRECT_URI=http://localhost:3001/post-login
     ports:
-      - "3000:3000"
+      - "3001:3001"
     depends_on:
       - hydra
       - kratos
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
-  vote-api:
+  vote-api-java:
     build:
-      context: ./services/vote-api
+      context: ./services/vote-api-java
     environment:
-      - PORT=4000
-      - OIDC_ISSUER_URL=http://localhost:4444/
+      - PORT=4001
+      - OIDC_ISSUER_URL_PUBLIC=http://localhost:4444/
+      - OIDC_JWKS_URL=http://hydra:4444/.well-known/jwks.json
       - REQUIRED_SCOPE=vote:cast
     ports:
-      - "4000:4000"
+      - "4001:4001"
     depends_on:
       - hydra
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 volumes:
   pgdata:

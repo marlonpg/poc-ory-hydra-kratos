@@ -1,7 +1,7 @@
 version: v0.14.0
 
 selfservice:
-  default_browser_return_url: http://localhost:3000/post-login
+  default_browser_return_url: http://localhost:3001/post-login
   allowed_return_urls:
     - http://localhost:3000
     - http://localhost:3001
