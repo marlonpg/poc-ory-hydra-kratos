@@ -1,7 +1,8 @@
 /**
- * K6 Load Test: Hydra Token Endpoint
+ * K6 Load Test: Hydra JWKS Endpoint
  * 
- * Tests Hydra's ability to handle concurrent token requests.
+ * Tests Hydra's ability to serve JWKS (public keys) under load.
+ * This is what Vote API calls to verify JWT signatures.
  * Target: 10k requests per second
  * 
  * Run: k6 run test/load-test-hydra.js
@@ -10,6 +11,7 @@
 
 import http from 'k6/http';
 import { check, sleep } from 'k6';
+import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
 
 // Configuration based on LOAD environment variable
 const loadProfile = __ENV.LOAD || 'low';
@@ -43,8 +45,8 @@ export const options = {
     { duration: '10s', target: 0 }  // ramp down
   ],
   thresholds: {
-    http_req_duration: ['p(95)<1000', 'p(99)<2000'],  // 95% under 1s, 99% under 2s
-    http_req_failed: ['rate<0.1'],                     // error rate < 10%
+    http_req_duration: ['p(95)<100', 'p(99)<200'],  // JWKS should be very fast (cached)
+    http_req_failed: ['rate<0.01'],                  // Should have near-zero failures
   },
   ext: {
     loadimpact: {
@@ -53,73 +55,53 @@ export const options = {
   }
 };
 
-// Store auth codes to reuse (simulates real OAuth flow)
-const authCodes = {};
-let codeIndex = 0;
-
 export function setup() {
   console.log(`Running test profile: ${config.name}`);
-  
-  // Pre-generate some auth codes by calling login endpoint
-  // In reality, you'd get these from the login flow
-  const pregenCodes = [];
-  for (let i = 0; i < 100; i++) {
-    pregenCodes.push(`auth-code-${i}-${Date.now()}`);
-  }
-  return pregenCodes;
+  console.log('Testing JWKS endpoint - this is what Vote API uses to verify JWT tokens');
+  return {};
 }
 
-export default function (codes) {
-  const clientId = 'voter-app';
-  const clientSecret = 'my-client-secret';
-  const redirectUri = 'http://localhost:3000/post-login';
+export default function () {
+  // Test JWKS endpoint (public, no auth required)
+  // This is the endpoint that Vote API calls to get public keys for JWT verification
+  const response = http.get('http://localhost:4444/.well-known/jwks.json');
   
-  // Use a pre-generated code (in reality, you'd get this from /oauth2/auth)
-  // For this test, we're simulating token requests
-  const code = codes[codeIndex % codes.length];
-  codeIndex++;
-  
-  // Token endpoint request
-  const payload = `grant_type=authorization_code&code=${code}&redirect_uri=${encodeURIComponent(redirectUri)}&client_id=${clientId}&client_secret=${clientSecret}`;
-  
-  const params = {
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    auth: 'basic',  // Use HTTP Basic auth
-    username: clientId,
-    password: clientSecret,
-  };
-  
-  const response = http.post(
-    'http://localhost:4444/oauth2/token',
-    payload,
-    params
-  );
-  
-  // Even if code is invalid, we're measuring token endpoint throughput
+  // Verify response
   check(response, {
-    'status is 200 or 400': (r) => r.status === 200 || r.status === 400,  // 400 ok for invalid code
-    'response time < 1s': (r) => r.timings.duration < 1000,
-    'response has body': (r) => r.body.length > 0,
+    'JWKS endpoint responded (200)': (r) => r.status === 200,
+    'response time < 100ms': (r) => r.timings.duration < 100,
+    'has keys array': (r) => {
+      try {
+        const body = JSON.parse(r.body);
+        return body.keys && Array.isArray(body.keys) && body.keys.length > 0;
+      } catch (e) {
+        return false;
+      }
+    },
   });
   
-  // Light sleep to avoid hammering too hard
+  // Light sleep to simulate realistic load
   sleep(0.1);
 }
 
 export function handleSummary(data) {
+  const totalReqs = data.metrics.http_reqs ? data.metrics.http_reqs.values.count : 0;
+  const failedReqs = data.metrics.http_req_failed ? data.metrics.http_req_failed.values.passes : 0;
+  const avgDuration = data.metrics.http_req_duration ? data.metrics.http_req_duration.values.avg : 0;
+  const p95Duration = data.metrics.http_req_duration ? data.metrics.http_req_duration.values['p(95)'] : 0;
+  const p99Duration = data.metrics.http_req_duration ? (data.metrics.http_req_duration.values['p(99)'] || data.metrics.http_req_duration.values['p(95)']) : 0;
+  
   console.log('='.repeat(60));
-  console.log(`Load Test Summary - ${config.name}`);
+  console.log(`Hydra JWKS Endpoint Test - ${config.name}`);
   console.log('='.repeat(60));
-  console.log(`Total Requests: ${data.metrics.http_reqs.value}`);
-  console.log(`Failed Requests: ${data.metrics.http_req_failed.value}`);
-  console.log(`Avg Duration: ${Math.round(data.metrics.http_req_duration.values.avg)}ms`);
-  console.log(`P95 Duration: ${Math.round(data.metrics.http_req_duration.values['p(95)'])}ms`);
-  console.log(`P99 Duration: ${Math.round(data.metrics.http_req_duration.values['p(99)'])}ms`);
+  console.log(`Total Requests: ${totalReqs}`);
+  console.log(`Failed Requests: ${failedReqs}`);
+  console.log(`Avg Duration: ${Math.round(avgDuration)}ms`);
+  console.log(`P95 Duration: ${Math.round(p95Duration)}ms`);
+  console.log(`P99 Duration: ${Math.round(p99Duration)}ms`);
   console.log('='.repeat(60));
   
   return {
-    stdout: data.metrics,
+    'stdout': textSummary(data, { indent: ' ', enableColors: true }),
   };
 }
