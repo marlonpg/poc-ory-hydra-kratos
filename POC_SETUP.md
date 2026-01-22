@@ -2,12 +2,10 @@
 
 ## Overview
 This POC demonstrates the full flow:
-1. User registers/logs in via Kratos self-service UI.
-2. Kratos session → login-consent service.
-3. login-consent bridges to Hydra, accepts login/consent challenges.
-4. Hydra issues tokens.
-5. Client calls vote-api with Hydra token.
-6. vote-api verifies token via JWKS and enforces one-vote-per-election.
+1) **Kratos (4455 UI, 4433 public):** User registers/logs in.
+2) **Login-Consent (3000):** Bridges Kratos session to Hydra login/consent challenges.
+3) **Hydra (4444 public, 4445 admin):** Issues OAuth2/OIDC tokens.
+4) **Vote API (4000):** Validates Hydra JWTs and enforces one vote per election.
 
 ## Prerequisites
 - Docker & Docker Compose
@@ -26,61 +24,53 @@ Check all services are healthy:
 
 ```bash
 curl http://localhost:4444/.well-known/openid-configuration      # Hydra OIDC config
-curl http://localhost:4433/health                               # Kratos public
 curl http://localhost:3000/health                               # login-consent
 curl http://localhost:4000/health                               # vote-api
+open http://localhost:4455/registration                         # Kratos self-service UI (browser)
 ```
 
 ## Manual Test Flow
 
-### 1. Register a user in Kratos UI
+### 1. Register a user in Kratos UI (creates account)
 Open browser → http://localhost:4455/registration
 - Email: `voter@example.com`
-- Name: `Test Voter`
-- Password: `SecurePassword123`
+- Password: any strong password
 
-### 2. Start OAuth flow to get a token
-Register a client in Hydra, then start an auth request. For simplicity, here's a shortcut:
-
-**Hydra Admin API** to create a client:
-
+### 2. Create OAuth client in Hydra (what Hydra uses to issue tokens)
 ```bash
 curl -X POST http://localhost:4445/admin/clients \
   -H 'Content-Type: application/json' \
   -d '{
     "client_id": "voter-app",
     "client_secret": "my-client-secret",
-    "redirect_uris": ["http://localhost:3001/callback"],
-    "grant_types": ["authorization_code"],
-    "response_types": ["code"],
-    "scopes": ["openid", "profile", "email", "vote:cast"]
+    "redirect_uris": ["http://localhost:3000/post-login"],
+    "grant_types": ["authorization_code", "refresh_token"],
+    "response_types": ["code", "id_token"],
+    "scope": "openid profile email vote:cast"
   }'
 ```
 
-### 3. Get auth code → token
-Simulate an OAuth client redirecting to Hydra:
-
-```bash
-# Step 1: Redirect to Hydra's auth endpoint
-# In browser: http://localhost:4444/oauth2/auth?client_id=voter-app&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A3001%2Fcallback&scope=openid+profile+email+vote%3Acast&state=state123
-
-# This will:
-# - Redirect to login-consent /login?login_challenge=...
-# - If no Kratos session, redirect to Kratos UI to log in
-# - After Kratos login, return to login-consent, which accepts Hydra's login_challenge
-# - Redirect to Hydra consent (login-consent /consent?consent_challenge=...)
-# - After consent accept, redirect to http://localhost:3001/callback?code=...&state=state123
-
-# Step 2: Exchange code for token (using Hydra token endpoint)
-# Substitute CODE from the redirect URL above
-curl -X POST http://localhost:4444/oauth2/token \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  -d "grant_type=authorization_code&client_id=voter-app&client_secret=my-client-secret&code=CODE&redirect_uri=http%3A%2F%2Flocalhost%3A3001%2Fcallback"
+### 3. Start OAuth flow (browser) via login-consent (bridges Hydra ↔ Kratos)
+Open in browser:
 ```
+http://localhost:4444/oauth2/auth?client_id=voter-app&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Fpost-login&scope=openid+profile+email+vote%3Acast&state=state123
+```
+Flow:
+- Hydra → login-consent `/login`
+- If no Kratos session, login-consent redirects to Kratos UI (4455) to sign in
+- On success, login-consent accepts Hydra login/consent and redirects to `http://localhost:3000/post-login?code=...`
 
-This returns: `access_token`, `id_token`, `refresh_token`. Extract the `access_token`.
+### 4. Exchange code for tokens (Hydra token endpoint)
+Use the code from `post-login?code=...` and HTTP Basic auth (`-u client:secret`):
+```bash
+curl -X POST http://localhost:4444/oauth2/token \
+  -u voter-app:my-client-secret \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d 'grant_type=authorization_code&code=PASTE_CODE_HERE&redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Fpost-login'
+```
+Returns: `access_token`, `id_token`, `refresh_token`.
 
-### 4. Cast a vote using the token
+### 5. Cast a vote using the token (calls vote-api 4000)
 
 ```bash
 ACCESS_TOKEN="<paste token from above>"
@@ -108,7 +98,7 @@ Expected response (first vote succeeds):
 }
 ```
 
-### 5. Verify one-vote-per-election
+### 6. Verify one-vote-per-election
 Try the same vote again:
 ```bash
 curl -X POST http://localhost:4000/vote \
@@ -122,7 +112,7 @@ curl -X POST http://localhost:4000/vote \
 
 Expected: `409 Conflict` with `{ "error": "already voted in this election" }`
 
-### 6. View aggregated results
+### 7. View aggregated results
 
 ```bash
 curl http://localhost:4000/votes/election-2025-01
@@ -142,11 +132,10 @@ Example response:
 ## Architecture Components (Compose)
 
 - **postgres** (5432): databases for Hydra and Kratos
-- **hydra** (4444 public, 4445 admin): OAuth2/OIDC server
-- **kratos** (4433 public, 4434 admin): Identity and auth
-- **kratos-ui** (4455): Kratos self-service UI (registration, login, settings)
-- **login-consent** (3000): bridge between Hydra and Kratos, handles login/consent challenges
-- **vote-api** (4000): API verifying Hydra JWTs and recording votes
+- **hydra** (4444 public, 4445 admin): OAuth2/OIDC server (token issuer)
+- **kratos** (4433 public, 4434 admin) + **kratos-ui** (4455): identity and self-service UI (account creation/login)
+- **login-consent** (3000): small Node app that bridges Hydra login/consent to Kratos sessions, and provides the `/post-login` page with the auth link
+- **vote-api** (4000): small Node API that verifies Hydra JWTs (JWKS from hydra) and enforces one vote per election
 
 ## Next Steps (Towards Production)
 

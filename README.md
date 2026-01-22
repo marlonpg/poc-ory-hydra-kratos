@@ -145,4 +145,11 @@ CREATE TABLE vote_totals (
 3. Add Kafka (MSK) and a small aggregator; then wire Redis and Aurora.
 4. Expand anti-bot controls (WAF rules, Turnstile, WebAuthn enrollment) and end-to-end observability.
 
+## POC Happy Path (local, Docker Compose)
+- Create identity: Kratos UI at http://localhost:4455/registration.
+- OAuth client: Hydra admin at http://localhost:4445/admin/clients (example client: id `voter-app`, secret `my-client-secret`, redirect `http://localhost:3000/post-login`, scopes `openid profile email vote:cast`).
+- Start auth: browser to http://localhost:4444/oauth2/auth?client_id=voter-app&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Fpost-login&scope=openid+profile+email+vote%3Acast&state=state123 (Hydra → login-consent → Kratos UI if no session → back to login-consent → consent → code at /post-login).
+- Exchange code for tokens: POST http://localhost:4444/oauth2/token with Basic auth `voter-app:my-client-secret`, body `grant_type=authorization_code&code=...&redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Fpost-login`.
+- Cast vote: POST http://localhost:4000/vote with Bearer access_token, JSON `{ "electionId": "election-2025-01", "candidateId": "alice" }`. Second vote with same token returns 409. Counts: GET http://localhost:4000/votes/election-2025-01.
+
 If you want, I can scaffold the POC (Compose + minimal services) under this repo to get you moving quickly.
