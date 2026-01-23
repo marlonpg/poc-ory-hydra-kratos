@@ -1,3 +1,19 @@
+# Realtime voting system requirements
+- Never loose data
+- Be secure and prevent bots and bad actors
+- Handle 300M users
+- Handle peak of 250k RPS
+- Must ensure users vote only once
+
+## Restrictions (do not use)
+- Serveless
+- MongoDB
+- On-Premise, Google Cloud, Azure
+- OpenShift
+- Mainframes
+- Monolith Solutions
+
+
 # Realtime Voting System with Ory Hydra + Kratos (Architecture Plan)
 
 This document proposes a concrete, scalable, and secure architecture that uses Ory Hydra (OAuth2/OIDC) and Ory Kratos (Identity) to meet the following requirements and restrictions.
