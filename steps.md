@@ -1,4 +1,14 @@
 # Simple analogy
+
+## The Solution (with PKCE):
+1. Mobile app → generates random string called "code_verifier"
+2. Mobile app → hashes it → creates "code_challenge"
+3. Mobile app → sends auth request with code_challenge to Hydra
+4. User authenticates → Hydra returns code
+5. Mobile app → exchanges code + original code_verifier with Hydra
+6. Hydra → verifies: hash(code_verifier) == code_challenge
+7. Only your app has the original code_verifier, so only it can complete the exchange
+
 ## Your Google login example:
 
 1. Click "Login with Google" on website
