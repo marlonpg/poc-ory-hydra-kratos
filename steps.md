@@ -1,6 +1,6 @@
 # Simple analogy
 
-## The Solution (with PKCE):
+## The Solution (with PKCE = "Proof Key for Code Exchange" (pronounced "pixy")):
 1. Mobile app → generates random string called "code_verifier"
 2. Mobile app → hashes it → creates "code_challenge"
 3. Mobile app → sends auth request with code_challenge to Hydra
